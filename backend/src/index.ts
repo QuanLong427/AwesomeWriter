@@ -3,15 +3,18 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
+import { createServer } from 'http';
 import { authRoutes } from './routes/auth';
 import { projectRoutes } from './routes/projects';
 import { convertRoutes } from './routes/convert';
 import { errorHandler } from './middleware/errorHandler';
+import { initSocket } from './socket';
 
 // 加载环境变量
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
 
 // 中间件
@@ -37,7 +40,10 @@ app.get('/api/health', (req, res) => {
 // 错误处理
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+// 初始化 Socket.IO
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 

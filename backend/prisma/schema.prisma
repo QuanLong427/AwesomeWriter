@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
 }
 
 // 用户模型
@@ -24,30 +24,38 @@ model User {
 
 // 小说项目模型
 model Project {
-  id        String   @id @default(uuid())
-  userId    String
-  title     String
-  content   String   @db.Text
-  status    String   @default("draft") // draft, processing, completed
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(uuid())
+  userId          String
+  title           String
+  content         String   @db.Text
+  status          String   @default("draft") // draft, processing, completed
+  episodeCount    Int?                          // 目标集数
+  episodeDuration Int?                          // 每集时长（分钟）
+  artStyle        String?                       // 画风/视觉风格
+  videoRatio      String?  @default("16:9")     // 视频画幅
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // 关联
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  chapters   Chapter[]
-  characters Character[]
-  scripts    Script[]
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapters            Chapter[]
+  characters          Character[]
+  scripts             Script[]
+  storySkeletons      StorySkeleton[]
+  adaptationStrategies AdaptationStrategy[]
 }
 
 // 章节模型
 model Chapter {
-  id        String   @id @default(uuid())
-  projectId String
-  number    Int
-  title     String
-  content   String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(uuid())
+  projectId  String
+  number     Int
+  title      String
+  content    String   @db.Text
+  event      String?  @db.Text  // 章节事件摘要
+  eventState String?             // 事件状态
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // 关联
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -92,6 +100,28 @@ model Script {
   format    String   @default("txt") // txt, pdf, docx
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // 关联
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// 故事骨架模型
+model StorySkeleton {
+  id        String   @id @default(uuid())
+  projectId String
+  content   String   @db.Text  // JSON 格式的骨架数据
+  createdAt DateTime @default(now())
+
+  // 关联
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// 改编策略模型
+model AdaptationStrategy {
+  id        String   @id @default(uuid())
+  projectId String
+  content   String   @db.Text  // JSON 格式的策略数据
+  createdAt DateTime @default(now())
 
   // 关联
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

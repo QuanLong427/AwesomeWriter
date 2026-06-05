@@ -1,9 +1,10 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Home, FileText, Users, BookOpen, Settings } from 'lucide-react'
 import { TextInput } from './components/TextInput'
 import { ScriptPreview } from './components/ScriptPreview'
-import { apiRequest } from './lib/utils'
+import { AgentMessageStream } from './components/AgentMessageStream'
+import { useSocket, type AgentMessage } from './hooks/useSocket'
 import './App.css'
 
 // 页面组件
@@ -81,14 +82,31 @@ function EditorPage() {
   const [inputText, setInputText] = useState('')
   const [scriptContent, setScriptContent] = useState('')
   const [isConverting, setIsConverting] = useState(false)
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([])
 
-  const handleConvert = async () => {
+  const handleMessage = useCallback((msg: AgentMessage) => {
+    setAgentMessages((prev) => [...prev, msg])
+
+    if (msg.type === 'text-delta' && msg.content) {
+      setScriptContent((prev) => prev + msg.content)
+    }
+    if (msg.type === 'complete') {
+      setIsConverting(false)
+    }
+    if (msg.type === 'error') {
+      alert(msg.error || '转换失败')
+      setIsConverting(false)
+    }
+  }, [])
+
+  const { connected, emit } = useSocket({ onMessage: handleMessage })
+
+  const handleConvert = useCallback(() => {
     if (!inputText.trim()) {
       alert('请输入小说内容')
       return
     }
 
-    // 检查AI配置
     const apiKey = localStorage.getItem('ai_api_key')
     if (!apiKey) {
       alert('请先在设置中配置AI API Key')
@@ -97,72 +115,21 @@ function EditorPage() {
 
     setIsConverting(true)
     setScriptContent('')
+    setAgentMessages([])
 
-    // 获取AI配置
     const aiConfig = {
       provider: localStorage.getItem('ai_provider') || 'openai',
       apiKey: apiKey,
       model: localStorage.getItem('ai_model') || undefined,
     }
 
-    try {
-      const response = await apiRequest<{ data: { jobId: string } }>('/api/convert', {
-        method: 'POST',
-        body: JSON.stringify({ content: inputText, aiConfig }),
-      })
-
-      // 轮询转换状态
-      pollConversionStatus(response.data.jobId)
-    } catch (error) {
-      console.error('转换失败:', error)
-      alert('转换失败，请重试')
-      setIsConverting(false)
-    }
-  }
-
-  const pollConversionStatus = async (id: string) => {
-    const maxAttempts = 30
-    let attempts = 0
-
-    const poll = async () => {
-      try {
-        const response = await apiRequest<{ data: { status: string; output?: string } }>(
-          `/api/convert/${id}`
-        )
-
-        if (response.data.status === 'completed') {
-          setScriptContent(response.data.output || '')
-          setIsConverting(false)
-          return
-        }
-
-        if (response.data.status === 'failed') {
-          alert('转换失败，请重试')
-          setIsConverting(false)
-          return
-        }
-
-        attempts++
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 1000)
-        } else {
-          alert('转换超时，请稍后重试')
-          setIsConverting(false)
-        }
-      } catch (error) {
-        console.error('查询转换状态失败:', error)
-        attempts++
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 1000)
-        } else {
-          alert('查询转换状态失败，请稍后重试')
-          setIsConverting(false)
-        }
-      }
-    }
-
-    poll()
-  }
+    // 通过 Socket.IO 启动转换
+    emit('agent:start', {
+      projectId: 'default',
+      content: inputText,
+      aiConfig,
+    })
+  }, [inputText, emit])
 
   const handleExport = (format: 'pdf' | 'docx' | 'txt') => {
     const blob = new Blob([scriptContent], { type: 'text/plain;charset=utf-8' })
@@ -183,13 +150,16 @@ function EditorPage() {
         <div className="w-1/2 border-r border-gray-200 flex flex-col p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">小说内容</h2>
-            <button
-              onClick={handleConvert}
-              disabled={isConverting || !inputText.trim()}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isConverting ? '转换中...' : '开始转换'}
-            </button>
+            <div className="flex items-center gap-3">
+              <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <button
+                onClick={handleConvert}
+                disabled={isConverting || !inputText.trim()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isConverting ? '转换中...' : '开始转换'}
+              </button>
+            </div>
           </div>
           <TextInput
             value={inputText}
@@ -199,6 +169,7 @@ function EditorPage() {
 
         {/* 右侧：剧本预览 */}
         <div className="w-1/2 flex flex-col p-4">
+          <AgentMessageStream messages={agentMessages} />
           <ScriptPreview
             content={scriptContent}
             isConverting={isConverting}

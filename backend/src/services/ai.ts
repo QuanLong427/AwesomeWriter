@@ -1,19 +1,109 @@
 import { ApiError } from '../middleware/errorHandler';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { streamText, type ToolSet } from 'ai';
+import { z } from 'zod';
 
-// AI配置
-interface AIConfig {
-  provider: 'openai' | 'claude';
+// AI 配置
+export interface AIConfig {
+  provider: 'openai' | 'claude' | 'deepseek';
   apiKey: string;
   model?: string;
 }
 
-// AI响应接口
-interface AIResponse {
+// AI 响应接口（兼容旧接口）
+export interface AIResponse {
   content: string;
   usage?: {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+  };
+}
+
+// Provider 工厂
+function createProvider(config: AIConfig) {
+  switch (config.provider) {
+    case 'openai':
+      return createOpenAI({
+        apiKey: config.apiKey || process.env.OPENAI_API_KEY,
+        baseURL: process.env.OPENAI_BASE_URL || undefined,
+      });
+    case 'claude':
+      return createAnthropic({ apiKey: config.apiKey });
+    case 'deepseek':
+      return createOpenAI({
+        apiKey: config.apiKey,
+        baseURL: 'https://api.deepseek.com',
+      });
+    default:
+      throw new ApiError(`不支持的AI提供商: ${config.provider}`, 400);
+  }
+}
+
+// 获取默认模型名称
+function getDefaultModel(provider: AIConfig['provider']): string {
+  // 优先使用环境变量中的模型名
+  if (process.env.MODEL_NAME) {
+    return process.env.MODEL_NAME;
+  }
+  switch (provider) {
+    case 'openai':
+      return 'gpt-4';
+    case 'claude':
+      return 'claude-sonnet-4-20250514';
+    case 'deepseek':
+      return 'deepseek-chat';
+    default:
+      throw new ApiError(`不支持的AI提供商: ${provider}`, 400);
+  }
+}
+
+/**
+ * 流式文本生成
+ * 返回 AsyncIterable，可逐 chunk 推送到 Socket.IO
+ */
+export function streamChat(config: AIConfig, systemPrompt: string, userMessage: string, tools?: ToolSet): any {
+  if (!config.apiKey) {
+    throw new ApiError('API Key未配置，请在设置中配置', 400);
+  }
+
+  const provider = createProvider(config);
+  const model = config.model || getDefaultModel(config.provider);
+
+  return streamText({
+    model: provider(model),
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+    tools,
+    temperature: 0.7,
+    maxOutputTokens: 4000,
+  });
+}
+
+/**
+ * 非流式文本生成（兼容旧接口）
+ */
+export async function generateText(config: AIConfig, systemPrompt: string, userMessage: string): Promise<AIResponse> {
+  if (!config.apiKey) {
+    throw new ApiError('API Key未配置，请在设置中配置', 400);
+  }
+
+  const provider = createProvider(config);
+  const model = config.model || getDefaultModel(config.provider);
+
+  const { streamText: gt } = await import('ai');
+  const result = await gt({
+    model: provider(model),
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+    temperature: 0.7,
+    maxOutputTokens: 4000,
+  });
+
+  const text = await result.text;
+  return {
+    content: text,
   };
 }
 
@@ -53,106 +143,24 @@ EXT. 门口 - 夜晚
 王小明
 李明，好久不见！
 
-请转换以下内容：
-`;
+请转换以下内容：`;
 
-// OpenAI API调用
-async function callOpenAI(
-  content: string,
-  apiKey: string,
-  model: string = 'gpt-4'
-): Promise<AIResponse> {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: CONVERSION_PROMPT },
-        { role: 'user', content },
-      ],
-      temperature: 0.7,
-      max_tokens: 4000,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new ApiError(`OpenAI API error: ${error.error?.message || response.statusText}`, 500);
-  }
-
-  const data = await response.json();
-  return {
-    content: data.choices[0].message.content,
-    usage: data.usage,
-  };
-}
-
-// Claude API调用
-async function callClaude(
-  content: string,
-  apiKey: string,
-  model: string = 'claude-3-opus-20240229'
-): Promise<AIResponse> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 4000,
-      system: CONVERSION_PROMPT,
-      messages: [
-        { role: 'user', content },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new ApiError(`Claude API error: ${error.error?.message || response.statusText}`, 500);
-  }
-
-  const data = await response.json();
-  return {
-    content: data.content[0].text,
-    usage: data.usage ? {
-      promptTokens: data.usage.input_tokens,
-      completionTokens: data.usage.output_tokens,
-      totalTokens: data.usage.input_tokens + data.usage.output_tokens,
-    } : undefined,
-  };
-}
-
-// 统一AI调用接口
+/**
+ * 统一AI调用接口（兼容旧接口）
+ */
 export async function convertNovelToScript(
   content: string,
   config: AIConfig
 ): Promise<AIResponse> {
-  if (!config.apiKey) {
-    throw new ApiError('API Key未配置，请在设置中配置', 400);
-  }
-
-  switch (config.provider) {
-    case 'openai':
-      return callOpenAI(content, config.apiKey, config.model);
-    case 'claude':
-      return callClaude(content, config.apiKey, config.model);
-    default:
-      throw new ApiError(`不支持的AI提供商: ${config.provider}`, 400);
-  }
+  return generateText(config, CONVERSION_PROMPT, content);
 }
 
-// 获取默认AI配置
+/**
+ * 获取默认AI配置
+ */
 export function getDefaultAIConfig(): AIConfig {
   return {
-    provider: (process.env.AI_PROVIDER as 'openai' | 'claude') || 'openai',
+    provider: (process.env.AI_PROVIDER as AIConfig['provider']) || 'openai',
     apiKey: process.env.AI_API_KEY || '',
     model: process.env.AI_MODEL || undefined,
   };
