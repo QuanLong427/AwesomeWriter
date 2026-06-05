@@ -1,0 +1,111 @@
+// AI小说转剧本工具数据库模型
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 用户模型
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  username  String
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关联
+  projects  Project[]
+}
+
+// 小说项目模型
+model Project {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  content   String   @db.Text
+  status    String   @default("draft") // draft, processing, completed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关联
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapters   Chapter[]
+  characters Character[]
+  scripts    Script[]
+}
+
+// 章节模型
+model Chapter {
+  id        String   @id @default(uuid())
+  projectId String
+  number    Int
+  title     String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关联
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scenes  Scene[]
+}
+
+// 场景模型
+model Scene {
+  id           String   @id @default(uuid())
+  chapterId    String
+  number       Int
+  location     String
+  time         String
+  content      String   @db.Text
+  scriptFormat String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 关联
+  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+}
+
+// 角色模型
+model Character {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String
+  description String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 关联
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// 剧本模型
+model Script {
+  id        String   @id @default(uuid())
+  projectId String
+  title     String
+  content   String   @db.Text
+  format    String   @default("txt") // txt, pdf, docx
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关联
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// 转换任务模型
+model ConversionJob {
+  id          String    @id @default(uuid())
+  userId      String
+  projectId   String?
+  status      String    @default("pending") // pending, processing, completed, failed
+  input       String    @db.Text
+  output      String?   @db.Text
+  error       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+}
